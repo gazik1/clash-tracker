@@ -98,6 +98,8 @@ def export(store,path,sid=None):
     a.hidden_columns.add(9)
     a.row(4,['Игрок','Ник','Тег','Донат за период','Клан ЛВК ('+current+')','Звёзды ЛВК',
              'Последний запрос, МСК','Учёт в периоде','ID игрока'],1)
+    friend_sheet=base('Настоящий друг',[28,29,17,23,27,17], 'Пожертвования · Настоящий друг',period)
+    friend_sheet.row(4,['Игрок','Ник','Тег','База на старте','Последнее показание','Разница'],1)
     groups=defaultdict(list)
     for row in rows:
         groups[row['player']].append(row)
@@ -114,9 +116,26 @@ def export(store,path,sid=None):
             a.row(rr,[name,r['nick'],r['tag'],r['total'],r['cwl_clan'],stars,date(r['last_time']),status,player_id],
                   STRIPED if striped else 0)
             a.put(rr,4,r['total'],STRIPED_DONATION if striped else DONATION)
+            if session:
+                friend_sheet.row(rr,[name,r['nick'],r['tag']],
+                                 STRIPED if striped else 0)
+                number_style=STRIPED_NUMBER if striped else NUMBER
+                friend_sheet.put(rr,4,r['baseline'],number_style)
+                friend_sheet.put(rr,5,r['last_value'],number_style)
+                friend_sheet.put(rr,6,(f'E{rr}-D{rr}',r['total']),STRIPED_DONATION if striped else DONATION)
             rr+=1
         a.merge(first,1,rr-1,1)
+        if session:
+            friend_sheet.merge(first,1,rr-1,1)
     last_account=rr-1
+    if session and rows:
+        friend_sheet.row(rr+1,['База берётся на старте периода или при добавлении аккаунта. После возврата база корректируется, чтобы исключить донат за время отсутствия.'],4)
+        friend_sheet.merge(rr+1,1,rr+1,6)
+        friend_sheet.row(rr+2,['Последнее показание берётся из последнего сохранённого замера аккаунта в выбранном периоде.'],4)
+        friend_sheet.merge(rr+2,1,rr+2,6)
+    else:
+        friend_sheet.row(5,['Нет показаний за выбранный период' if session else 'Подсчёт ещё не начат'],4)
+        friend_sheet.merge(5,1,5,6)
     if rows:
         a.auto_filter_ref=f'A4:I{last_account}'
         a.filter_buttons={5,6}
@@ -185,7 +204,7 @@ def export(store,path,sid=None):
                       player['best'], player['best_period'] or '—'])
         total.put(i,2,total_value,NUMBER)
         total.put(i,4,player['best'],NUMBER)
-    sheets=[summary,a,total,periods,journal]
+    sheets=[summary,a,friend_sheet,total,periods,journal]
     filter_name=(f'<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="1" hidden="1">'
                  f"'Аккаунты'!$A$4:$I${last_account}</definedName></definedNames>" if a.auto_filter_ref else '')
     destination=Path(path); destination.parent.mkdir(parents=True,exist_ok=True)

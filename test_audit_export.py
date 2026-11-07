@@ -35,6 +35,7 @@ class ExportAudit(unittest.TestCase):
         export(self.s, target)
         wb = self.load(target)
         self.assertEqual(wb['Аккаунты']['A5'].value, 'Нет аккаунтов в выбранном периоде')
+        self.assertEqual(wb['Настоящий друг']['A5'].value, 'Подсчёт ещё не начат')
         self.assertIsNone(wb['Аккаунты'].auto_filter.ref)
         wb.close()
         original = target.read_bytes()
@@ -67,6 +68,8 @@ class ExportAudit(unittest.TestCase):
             for name in z.namelist(): ET.fromstring(z.read(name))
         wb=self.load(target)
         self.assertEqual(wb['Аккаунты']['D5'].value,100)
+        friend_sheet=wb['Настоящий друг']
+        self.assertEqual([friend_sheet[f'{col}5'].value for col in 'DEF'],[850,950,100])
         self.assertEqual(wb['За всё время']['B5'].value,120)
         self.assertEqual(wb['Итоги по игрокам']['C5'].value,100)
         self.assertEqual(wb['За всё время']['D5'].value,100)
@@ -81,6 +84,10 @@ class ExportAudit(unittest.TestCase):
         for row in wb['Периоды'].iter_rows(min_row=5,values_only=True):
             self.assertEqual(row[2],ledger.get((row[3],row[1]),0))
         self.assertIn('независимо от выбранного периода',wb['Аккаунты']['A9'].value)
+        wb.close()
+
+        wb=self.load(target,data_only=False)
+        self.assertEqual(wb['Настоящий друг']['F5'].value,'=E5-D5')
         wb.close()
 
     def test_ranking_places_follow_donation_and_ties(self):
