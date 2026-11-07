@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-import socket
 import urllib.request
 import urllib.error
 from urllib.parse import quote
@@ -228,6 +227,10 @@ class Store:
             with target: self.db.backup(target)
         finally: target.close()
 
+class APITimeout(RuntimeError):
+    pass
+
+
 class API:
     BASES={'royaleapi':'https://cocproxy.royaleapi.dev/v1','direct':'https://api.clashofclans.com/v1'}
     def __init__(self,token,route='royaleapi'):
@@ -248,10 +251,20 @@ class API:
                 403:'Доступ запрещён: проверьте ключ разработчика. В ключе должен быть разрешён '+allowed_ip+'.',
                 404:'Нет данных для этого тега или группы ЛВК.',429:'Лимит API. Повторите позже.',503:'Технические работы Supercell.'}
             raise RuntimeError(messages.get(exc.code,'Ошибка API '+str(exc.code))) from None
-        except urllib.error.URLError: raise RuntimeError('Не удалось подключиться к API. Проверьте интернет.') from None
-        except (socket.timeout,TimeoutError): raise RuntimeError('API не ответил за 20 секунд. Повторите запрос.') from None
+        except (TimeoutError, urllib.error.URLError) as exc:
+            if isinstance(exc, urllib.error.URLError) and not isinstance(exc.reason, TimeoutError):
+                raise RuntimeError('Не удалось подключиться к API. Проверьте интернет.') from None
+            raise APITimeout('API не ответил за 20 секунд. Повторите запрос.') from None
         except (ValueError,UnicodeError): raise RuntimeError('API вернул некорректный ответ. Повторите запрос.') from None
-    def player(self,key): return self.get('/players/'+quote(key,safe=''))
+    def player(self,key):
+        path='/players/'+quote(key,safe='')
+        try:
+            return self.get(path)
+        except APITimeout:
+            try:
+                return self.get(path)
+            except APITimeout:
+                raise APITimeout('API дважды не ответил за 20 секунд. Повторите запрос позже.') from None
     def players(self,keys):
         result={}; errors=[]
         with ThreadPoolExecutor(max_workers=6) as pool:

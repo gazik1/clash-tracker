@@ -165,6 +165,35 @@ class Transport(unittest.TestCase):
         with patch.object(api,'player',return_value=profile('#Q0Y8Q2L')):
             with self.assertRaises(RuntimeError): api.players(['#P0Y8Q2L'])
 
+    def test_only_timed_out_player_request_is_retried(self):
+        import io, json, urllib.error
+        from collections import Counter
+        first, second = '#P0Y8Q2L', '#Q0Y8Q2L'
+        calls = Counter()
+
+        def send(request, timeout):
+            key = '#' + request.full_url.rsplit('%23',1)[1]
+            calls[key] += 1
+            if key == second and calls[key] == 1:
+                raise urllib.error.URLError(TimeoutError())
+            return io.BytesIO(json.dumps(profile(key)).encode())
+
+        with patch('urllib.request.urlopen',side_effect=send):
+            self.assertEqual(set(API('test').players([first,second])),{first,second})
+        self.assertEqual(calls,{first:1,second:2})
+
+    def test_permanent_timeout_and_http_error_stop_player_requests(self):
+        import urllib.error
+        with patch('urllib.request.urlopen',side_effect=TimeoutError) as send:
+            with self.assertRaisesRegex(RuntimeError,'дважды'):
+                API('test').players(['#P0Y8Q2L'])
+            self.assertEqual(send.call_count,2)
+        denied=urllib.error.HTTPError('https://test.invalid',403,'fail',{},None)
+        with patch('urllib.request.urlopen',side_effect=denied) as send:
+            with self.assertRaisesRegex(RuntimeError,'Доступ запрещён'):
+                API('test').player('#P0Y8Q2L')
+            self.assertEqual(send.call_count,1)
+
 class CWLRegression(unittest.TestCase):
     def test_day_qualified_season_is_displayed_in_current_month(self):
         with tempfile.TemporaryDirectory() as d:
