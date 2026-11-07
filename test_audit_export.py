@@ -35,13 +35,26 @@ class ExportAudit(unittest.TestCase):
         export(self.s, target)
         wb = self.load(target)
         self.assertEqual(wb['Аккаунты']['A5'].value, 'Нет аккаунтов в выбранном периоде')
-        self.assertEqual(wb['Настоящий друг']['A5'].value, 'Подсчёт ещё не начат')
+        self.assertEqual(wb['Настоящий друг']['A5'].value, 'Нет добавленных аккаунтов')
         self.assertIsNone(wb['Аккаунты'].auto_filter.ref)
         wb.close()
         original = target.read_bytes()
         with self.assertRaisesRegex(ValueError, 'Период не найден'):
             export(self.s, target, 1000)
         self.assertEqual(target.read_bytes(), original)
+
+    def test_friend_sheet_uses_latest_saved_reading_before_first_period(self):
+        pid = self.s.add_player('Александр')
+        self.s.add_account(pid, profile(value=100), t())
+        self.s.recalculate({'#P0Y8Q2L': profile(value=180)}, t(2))
+        self.assertIsNone(self.s.latest())
+        target = self.path / 'before-start.xlsx'
+        export(self.s, target)
+        wb = self.load(target)
+        friend_sheet = wb['Настоящий друг']
+        self.assertEqual([friend_sheet[f'{col}5'].value for col in 'ACDEF'],
+                         ['Александр', '#P0Y8Q2L', 'Не начат', 180, 'Не начат'])
+        wb.close()
 
     def test_xml_unicode_and_formula_like_names_are_literal(self):
         sheet = Sheet('Тест', [30])

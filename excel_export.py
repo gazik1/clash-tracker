@@ -98,7 +98,8 @@ def export(store,path,sid=None):
     a.hidden_columns.add(9)
     a.row(4,['Игрок','Ник','Тег','Донат за период','Клан ЛВК ('+current+')','Звёзды ЛВК',
              'Последний запрос, МСК','Учёт в периоде','ID игрока'],1)
-    friend_sheet=base('Настоящий друг',[28,29,17,23,27,17], 'Пожертвования · Настоящий друг',period)
+    friend_note=period if session else 'Подсчёт ещё не начат. Показаны последние сохранённые значения.'
+    friend_sheet=base('Настоящий друг',[28,29,17,23,27,17], 'Пожертвования · Настоящий друг',friend_note)
     friend_sheet.row(4,['Игрок','Ник','Тег','База на старте','Последнее показание','Разница'],1)
     groups=defaultdict(list)
     for row in rows:
@@ -116,25 +117,26 @@ def export(store,path,sid=None):
             a.row(rr,[name,r['nick'],r['tag'],r['total'],r['cwl_clan'],stars,date(r['last_time']),status,player_id],
                   STRIPED if striped else 0)
             a.put(rr,4,r['total'],STRIPED_DONATION if striped else DONATION)
+            friend_sheet.row(rr,[name,r['nick'],r['tag']],STRIPED if striped else 0)
+            number_style=STRIPED_NUMBER if striped else NUMBER
+            friend_sheet.put(rr,5,r['last_value'] if session else r['friend'],number_style)
             if session:
-                friend_sheet.row(rr,[name,r['nick'],r['tag']],
-                                 STRIPED if striped else 0)
-                number_style=STRIPED_NUMBER if striped else NUMBER
                 friend_sheet.put(rr,4,r['baseline'],number_style)
-                friend_sheet.put(rr,5,r['last_value'],number_style)
                 friend_sheet.put(rr,6,(f'E{rr}-D{rr}',r['total']),STRIPED_DONATION if striped else DONATION)
+            else:
+                friend_sheet.put(rr,4,'Не начат',STRIPED if striped else 0)
+                friend_sheet.put(rr,6,'Не начат',STRIPED if striped else 0)
             rr+=1
         a.merge(first,1,rr-1,1)
-        if session:
-            friend_sheet.merge(first,1,rr-1,1)
+        friend_sheet.merge(first,1,rr-1,1)
     last_account=rr-1
     if session and rows:
         friend_sheet.row(rr+1,['База берётся на старте периода или при добавлении аккаунта. После возврата база корректируется, чтобы исключить донат за время отсутствия.'],4)
         friend_sheet.merge(rr+1,1,rr+1,6)
         friend_sheet.row(rr+2,['Последнее показание берётся из последнего сохранённого замера аккаунта в выбранном периоде.'],4)
         friend_sheet.merge(rr+2,1,rr+2,6)
-    else:
-        friend_sheet.row(5,['Нет показаний за выбранный период' if session else 'Подсчёт ещё не начат'],4)
+    elif not rows:
+        friend_sheet.row(5,['Нет показаний за выбранный период' if session else 'Нет добавленных аккаунтов'],4)
         friend_sheet.merge(5,1,5,6)
     if rows:
         a.auto_filter_ref=f'A4:I{last_account}'
