@@ -98,8 +98,8 @@ class DesktopWorkflow(unittest.TestCase):
                 self.assertTrue(snapshot.name.endswith('_period-1_snapshot.xlsx'))
                 with snapshot.open('rb') as file:
                     workbook=load_workbook(file,data_only=True)
-                    self.assertEqual(workbook['Итоги по игрокам']['B5'].value,30)
-                    self.assertEqual([workbook['Аккаунты'][f'C{i}'].value for i in (5,6)],[10,20])
+                    self.assertEqual(workbook['Итоги по игрокам']['C5'].value,30)
+                    self.assertEqual([workbook['Аккаунты'][f'D{i}'].value for i in (5,6)],[10,20])
                     workbook.close()
                 with patch.object(app.simpledialog,'askstring',return_value='Новое имя'): ui.rename()
                 self.assertEqual(ui.store.players()[0]['name'],'Новое имя')

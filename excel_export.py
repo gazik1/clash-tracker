@@ -1,5 +1,5 @@
 """Small runtime OOXML exporter: Excel is not required on the user's computer."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 import datetime as dt
 import os
@@ -21,7 +21,9 @@ def safe(s):
                    0x10000 <= ord(c) <= 0x10FFFF)[:32767]
 
 class Sheet:
-    def __init__(self,name,widths): self.name=name; self.widths=widths; self.cells={}; self.merges=[]
+    def __init__(self,name,widths):
+        self.name=name; self.widths=widths; self.cells={}; self.merges=[]
+        self.filter_range=None; self.heights={}
     def put(self,row,column,value,style=0): self.cells[row,column]=(value,style)
     def row(self,r,values,style=0):
         for c,v in enumerate(values,1): self.put(r,c,v,style)
@@ -40,16 +42,27 @@ class Sheet:
                 content='<is><t xml:space="preserve">'+escape(safe('' if v is None else v))+'</t></is>'
             rows[r].append(f'<c {attrs}>{content}</c>')
         columns=''.join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i,w in enumerate(self.widths,1))
-        data=''.join(f'<row r="{r}" ht="{48 if r==2 else 38 if r==4 else 32}" customHeight="1">'+''.join(cells)+'</row>' for r,cells in sorted(rows.items()))
+        data=''.join(f'<row r="{r}" ht="{self.heights.get(r,48 if r==2 else 38 if r==4 else 32)}" customHeight="1">'+''.join(cells)+'</row>' for r,cells in sorted(rows.items()))
+        autofilter=f'<autoFilter ref="{self.filter_range}"/>' if self.filter_range else ''
         merges='<mergeCells count="'+str(len(self.merges))+'">'+''.join(f'<mergeCell ref="{m}"/>' for m in self.merges)+'</mergeCells>' if self.merges else ''
-        return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>{columns}</cols><sheetData>{data}</sheetData>{merges}<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>'
+        return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{NS}"><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>{columns}</cols><sheetData>{data}</sheetData>{autofilter}{merges}<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>'
+
+STRIPED, NUMBER, STRIPED_NUMBER, DONATION, STRIPED_DONATION = range(5,10)
+
+def table_style(fill, *, number=False, bold=False):
+    number_format=3 if number else 0
+    font=3 if bold else 0
+    alignment='horizontal="right"' if number else 'wrapText="1"'
+    return (f'<xf numFmtId="{number_format}" fontId="{font}" fillId="{fill}" borderId="1" xfId="0" '
+            f'applyNumberFormat="1" applyFill="1" applyFont="1" applyAlignment="1">'
+            f'<alignment vertical="center" {alignment}/></xf>')
 
 STYLES=f'''<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="{NS}">
-<fonts count="3"><font><sz val="11"/><name val="Calibri"/><color rgb="FF203044"/></font><font><b/><sz val="11"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Calibri"/><color rgb="FF163550"/></font></fonts>
-<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163550"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF3F8"/><bgColor indexed="64"/></patternFill></fill></fills>
+<fonts count="4"><font><sz val="11"/><name val="Calibri"/><color rgb="FF203044"/></font><font><b/><sz val="11"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Calibri"/><color rgb="FF163550"/></font><font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF095365"/></font></fonts>
+<fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163550"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF3F8"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF3F7FA"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDDECF3"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="2"><border/><border><left style="hair"><color rgb="FFCAD8E1"/></left><right style="hair"><color rgb="FFCAD8E1"/></right><top style="hair"><color rgb="FFCAD8E1"/></top><bottom style="hair"><color rgb="FFCAD8E1"/></bottom></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="3" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" horizontal="right"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'''
+<cellXfs count="10"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="3" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" horizontal="right"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>{table_style(4)}{table_style(0,number=True)}{table_style(4,number=True)}{table_style(3,number=True,bold=True)}{table_style(5,number=True,bold=True)}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'''
 
 def export(store,path,sid=None):
     session=store.latest() if sid is None else store.db.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
@@ -69,26 +82,25 @@ def export(store,path,sid=None):
     period='Подсчёт ещё не начат'
     if session:
         start=dt.datetime.fromisoformat(session['started']).astimezone(MSK).strftime('%d.%m.%Y %H:%M')
-        end=dt.datetime.fromisoformat(session['ended']).astimezone(MSK).strftime('%d.%m.%Y %H:%M') if session['ended'] else 'идёт'
-        period=f'Период #{session["id"]}: {start} → {end} (МСК). Выгружено {timestamp} МСК.'
-    a=base('Аккаунты',[24,36,19,32,15,4,24,22,22,27], 'CLASH · Отчёт по аккаунтам',period)
-    a.row(4,['Игрок','Ник / тег аккаунта','Донат за период','Клан ЛВК: '+current,'Звёзды ЛВК'],1)
-    a.put(4,7,'Игрок',1); a.put(4,8,'Итог за период',1)
-    a.put(4,9,'Последний запрос аккаунта, МСК',1); a.put(4,10,'Учёт аккаунта в периоде',1)
-    groups=defaultdict(list)
-    for r in rows: groups[r['player']].append(r)
-    rr=5
-    for j,group in enumerate(groups.values(),5):
-        first=rr
-        for r in group:
-            a.row(rr,[r['name'] if rr==first else '',r['nick']+'\n'+r['tag'],r['total'],r['cwl_clan'],r['stars'] if r['stars'] is not None else 'Нет данных'])
-            a.put(rr,3,r['total'],3)
-            a.put(rr,9,date(r['last_time']))
-            a.put(rr,10,('Завершён '+date(r['entry_ended'])) if r['entry_ended'] else
-                  'Учитывается' if session else 'Период не начат')
-            rr+=1
-        a.merge(first,1,rr-1,1)
-        a.put(j,7,group[0]['name']); a.put(j,8,(f'SUM(C{first}:C{rr-1})',sum(r['total'] for r in group)),3)
+        period=f'Период №{session["id"]} открыт с {start} МСК.'
+        if session['ended']:
+            period=f'Период №{session["id"]} завершён. {start} — {date(session["ended"])} МСК.'
+        period+=f' Выгружено {timestamp} МСК.'
+    a=base('Аккаунты',[25,24,15,19,24,15,21,24], 'Аккаунты игроков',period)
+    a.heights[2]=34
+    a.row(4,['Игрок','Ник','Тег','Донат за период','Клан ЛВК ('+current+')','Звёзды ЛВК',
+             'Последний запрос, МСК','Учёт в периоде'],1)
+    for i,r in enumerate(rows,5):
+        striped=i%2==0
+        status='Учитывается' if session else 'Период не начат'
+        if r['entry_ended']:
+            status='Завершён '+date(r['entry_ended'])
+        stars=r['stars'] if r['stars'] is not None else 'Нет данных'
+        a.row(i,[r['name'],r['nick'],r['tag'],r['total'],r['cwl_clan'],stars,date(r['last_time']),status],
+              STRIPED if striped else 0)
+        a.put(i,4,r['total'],STRIPED_DONATION if striped else DONATION)
+    rr=5+len(rows)
+    if rows: a.filter_range=f'A4:H{rr-1}'
     if not rows: a.row(5,['Нет аккаунтов в выбранном периоде'],4)
     a.row(max(rr+2,7),['Донат = прирост «Настоящий друг». Показатель не является суммой всех видов пожертвований.'],4)
     a.merge(max(rr+2,7),1,max(rr+2,7),8)
@@ -96,11 +108,33 @@ def export(store,path,sid=None):
     a.merge(max(rr+3,8),1,max(rr+3,8),8)
     a.row(max(rr+4,9),['Звёзды — сумма по полученным войнам ЛВК; при пропуске данных итог может быть неполным. Клан определяется по составу ЛВК.'],4)
     a.merge(max(rr+4,9),1,max(rr+4,9),8)
-    total=base('За всё время',[26,24,24], 'CLASH · Общий донат',f'Сумма всех периодов на момент выгрузки {timestamp} МСК. Паузы между периодами не учитываются.')
-    total.row(4,['Игрок','Донат с начала учёта','Статус игрока'],1)
-    summary=base('Итоги по игрокам',[27,23,23,25,22], 'CLASH · Итоги по игрокам',period)
-    current_label = f'Донат за период #{session["id"]}' if session else 'Донат за период'
-    summary.row(4,['Игрок',current_label,'Донат за всё время','Лучший период: донат','Период рекорда'],1)
+    total=base('За всё время',[27,22,17,21,19], 'Донат за всё время и рекорды',f'Сумма всех периодов на момент выгрузки {timestamp} МСК. Паузы между периодами не учитываются.')
+    total.row(4,['Игрок','Донат с начала учёта','Статус игрока','Рекорд по донату','Период рекорда'],1)
+    summary=base('Итоги по игрокам',[9,30,20,13,22], 'Рейтинг доната',period)
+    summary.heights.update({2:34,3:27,4:32})
+    summary.put(3,1,'Общий донат за период',4)
+    summary.merge(3,1,3,2)
+    grand_total=sum(player['current'] for player in summaries)
+    summary.put(3,3,(f'SUM(C5:C{4+len(summaries)})',grand_total) if summaries else 0,DONATION)
+    summary.row(4,['Место','Игрок','Донат за период','Аккаунты','Донат за всё время'],1)
+    account_counts=Counter(r['player'] for r in rows)
+    ranking=sorted(summaries,key=lambda p:(not account_counts[p['id']],-p['current'],p['name'].casefold(),p['id']))
+    previous_donation=None
+    place=0
+    for i,player in enumerate(ranking,5):
+        count=account_counts[player['id']]
+        rank='—'
+        if session and count:
+            if player['current']!=previous_donation:
+                place=i-4
+                previous_donation=player['current']
+            rank=place
+        striped=i%2==0
+        summary.row(i,[rank,player['name'],player['current'],count,player['total']],STRIPED if striped else 0)
+        summary.put(i,3,player['current'],STRIPED_DONATION if striped else DONATION)
+        summary.put(i,5,player['total'],STRIPED_NUMBER if striped else NUMBER)
+        summary.heights[i]=40 if len(player['name'])>30 else 25
+    if not ranking: summary.put(5,1,'Нет игроков для отображения',4); summary.merge(5,1,5,5)
     periods=base('Периоды',[26,18,22,16,20,24,24], 'CLASH · История подсчётов','Границы периода задаются кнопками «Начать» и «Завершить и сохранить Excel».')
     periods.row(4,['Игрок','Период','Донат','ID игрока','Статус периода','Начало, МСК','Конец, МСК'],1)
     journal=base('Журнал',[26,26,20,18,19,15], 'CLASH · Журнал приростов','Каждая запись показывает прирост достижения в открытом на тот момент периоде.')
@@ -123,9 +157,10 @@ def export(store,path,sid=None):
                                      date(sessions[result['period']]['started']),date(result['ended'])])
             period_row += 1
         total_value = (f"SUM('Периоды'!C{first}:C{period_row-1})", player['total']) if first < period_row else 0
-        total.row(i, [player['name'], total_value, 'Активен' if player['active'] else 'Архив'])
-        summary.row(i, [player['name'], player['current'], player['total'],
-                        player['best'], player['best_period'] or '—'])
+        total.row(i, [player['name'], total_value, 'Активен' if player['active'] else 'Архив',
+                      player['best'], player['best_period'] or '—'])
+        total.put(i,2,total_value,NUMBER)
+        total.put(i,4,player['best'],NUMBER)
     sheets=[summary,a,total,periods,journal]
     destination=Path(path); destination.parent.mkdir(parents=True,exist_ok=True)
     handle,tmp=tempfile.mkstemp(suffix='.xlsx',dir=destination.parent); os.close(handle)

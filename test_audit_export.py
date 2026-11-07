@@ -65,10 +65,11 @@ class ExportAudit(unittest.TestCase):
         with zipfile.ZipFile(target) as z:
             for name in z.namelist(): ET.fromstring(z.read(name))
         wb=self.load(target)
-        self.assertEqual(wb['Аккаунты']['H5'].value,100)
+        self.assertEqual(wb['Аккаунты']['D5'].value,100)
         self.assertEqual(wb['За всё время']['B5'].value,120)
-        self.assertEqual(wb['Итоги по игрокам']['B5'].value,100)
-        self.assertEqual(wb['Итоги по игрокам']['D5'].value,100)
+        self.assertEqual(wb['Итоги по игрокам']['C5'].value,100)
+        self.assertEqual(wb['За всё время']['D5'].value,100)
+        self.assertEqual(wb['За всё время']['E5'].value,first)
         self.assertEqual(wb['Периоды']['F5'].value,'31.10.2026 03:00')
         self.assertEqual(wb['Периоды']['G5'].value,'03.11.2026 03:00')
         self.assertEqual(wb['Периоды']['G6'].value,'Идёт')
@@ -79,6 +80,24 @@ class ExportAudit(unittest.TestCase):
         for row in wb['Периоды'].iter_rows(min_row=5,values_only=True):
             self.assertEqual(row[2],ledger.get((row[3],row[1]),0))
         self.assertIn('независимо от выбранного периода',wb['Аккаунты']['A9'].value)
+        wb.close()
+
+    def test_ranking_places_follow_donation_and_ties(self):
+        accounts={'Александр':'#P0Y8Q2L','Борис':'#Q0Y8Q2L','Юрий':'#R0Y8Q2L'}
+        for name, key in accounts.items():
+            self.s.add_account(self.s.add_player(name),profile(key,100),t())
+        self.s.add_player('Игрок без аккаунта')
+        sid=self.s.start({key:profile(key,100) for key in accounts.values()},t(2))
+        self.s.recalculate({key:profile(key,100+delta) for key,delta in zip(accounts.values(),[0,1500,1500])},t(3))
+        target=self.path/'ranking.xlsx'
+        export(self.s,target,sid)
+        wb=self.load(target)
+        self.assertEqual(wb.active.freeze_panes,'A5')
+        self.assertEqual(wb.active['C3'].value,3000)
+        self.assertEqual(wb.active['C5'].number_format,'#,##0')
+        self.assertEqual(list(wb.active.iter_rows(min_row=5,max_row=8,max_col=4,values_only=True)),
+                         [(1,'Борис',1500,1),(1,'Юрий',1500,1),(3,'Александр',0,1),('—','Игрок без аккаунта',0,0)])
+        self.assertEqual(wb['Аккаунты'].auto_filter.ref,'A4:H7')
         wb.close()
 
     def test_write_failure_leaves_existing_report_and_removes_temp(self):
