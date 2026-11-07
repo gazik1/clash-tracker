@@ -1,5 +1,5 @@
 """Small runtime OOXML exporter: Excel is not required on the user's computer."""
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 import datetime as dt
 import os
@@ -23,7 +23,8 @@ def safe(s):
 class Sheet:
     def __init__(self,name,widths):
         self.name=name; self.widths=widths; self.cells={}; self.merges=[]
-        self.filter_range=None; self.heights={}
+        self.auto_filter_ref=None; self.heights={}
+        self.hidden_columns=set(); self.filter_buttons=set()
     def put(self,row,column,value,style=0): self.cells[row,column]=(value,style)
     def row(self,r,values,style=0):
         for c,v in enumerate(values,1): self.put(r,c,v,style)
@@ -41,11 +42,17 @@ class Sheet:
                 attrs+=' t="inlineStr"'
                 content='<is><t xml:space="preserve">'+escape(safe('' if v is None else v))+'</t></is>'
             rows[r].append(f'<c {attrs}>{content}</c>')
-        columns=''.join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i,w in enumerate(self.widths,1))
+        columns=''.join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"'
+                        + (' hidden="1"' if i in self.hidden_columns else '') + '/>'
+                        for i,w in enumerate(self.widths,1))
         data=''.join(f'<row r="{r}" ht="{self.heights.get(r,48 if r==2 else 38 if r==4 else 32)}" customHeight="1">'+''.join(cells)+'</row>' for r,cells in sorted(rows.items()))
-        autofilter=f'<autoFilter ref="{self.filter_range}"/>' if self.filter_range else ''
+        auto_filter=''
+        if self.auto_filter_ref:
+            buttons=''.join(f'<filterColumn colId="{i-1}" hiddenButton="1"/>'
+                            for i in range(1,len(self.widths)+1) if i not in self.filter_buttons)
+            auto_filter=f'<autoFilter ref="{self.auto_filter_ref}">{buttons}</autoFilter>'
         merges='<mergeCells count="'+str(len(self.merges))+'">'+''.join(f'<mergeCell ref="{m}"/>' for m in self.merges)+'</mergeCells>' if self.merges else ''
-        return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{NS}"><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>{columns}</cols><sheetData>{data}</sheetData>{autofilter}{merges}<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>'
+        return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{NS}"><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>{columns}</cols><sheetData>{data}</sheetData>{auto_filter}{merges}<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>'
 
 STRIPED, NUMBER, STRIPED_NUMBER, DONATION, STRIPED_DONATION = range(5,10)
 
@@ -86,22 +93,35 @@ def export(store,path,sid=None):
         if session['ended']:
             period=f'Период №{session["id"]} завершён. {start} — {date(session["ended"])} МСК.'
         period+=f' Выгружено {timestamp} МСК.'
-    a=base('Аккаунты',[25,24,15,19,24,15,21,24], 'Аккаунты игроков',period)
+    a=base('Аккаунты',[25,24,15,19,24,15,21,24,16], 'Аккаунты игроков',period)
     a.heights[2]=34
+    a.hidden_columns.add(9)
     a.row(4,['Игрок','Ник','Тег','Донат за период','Клан ЛВК ('+current+')','Звёзды ЛВК',
-             'Последний запрос, МСК','Учёт в периоде'],1)
-    for i,r in enumerate(rows,5):
-        striped=i%2==0
-        status='Учитывается' if session else 'Период не начат'
-        if r['entry_ended']:
-            status='Завершён '+date(r['entry_ended'])
-        stars=r['stars'] if r['stars'] is not None else 'Нет данных'
-        a.row(i,[r['name'],r['nick'],r['tag'],r['total'],r['cwl_clan'],stars,date(r['last_time']),status],
-              STRIPED if striped else 0)
-        a.put(i,4,r['total'],STRIPED_DONATION if striped else DONATION)
-    rr=5+len(rows)
-    if rows: a.filter_range=f'A4:H{rr-1}'
-    if not rows: a.row(5,['Нет аккаунтов в выбранном периоде'],4)
+             'Последний запрос, МСК','Учёт в периоде','ID игрока'],1)
+    groups=defaultdict(list)
+    for row in rows:
+        groups[row['player']].append(row)
+    rr=5
+    for player_id,group in groups.items():
+        first=rr
+        for r in group:
+            striped=rr%2==0
+            status='Учитывается' if session else 'Период не начат'
+            if r['entry_ended']:
+                status='Завершён '+date(r['entry_ended'])
+            stars=r['stars'] if r['stars'] is not None else 'Нет данных'
+            name=r['name'] if rr==first else ''
+            a.row(rr,[name,r['nick'],r['tag'],r['total'],r['cwl_clan'],stars,date(r['last_time']),status,player_id],
+                  STRIPED if striped else 0)
+            a.put(rr,4,r['total'],STRIPED_DONATION if striped else DONATION)
+            rr+=1
+        a.merge(first,1,rr-1,1)
+    last_account=rr-1
+    if rows:
+        a.auto_filter_ref=f'A4:I{last_account}'
+        a.filter_buttons={5,6}
+    else:
+        a.row(5,['Нет аккаунтов в выбранном периоде'],4)
     a.row(max(rr+2,7),['Донат = прирост «Настоящий друг». Показатель не является суммой всех видов пожертвований.'],4)
     a.merge(max(rr+2,7),1,max(rr+2,7),8)
     a.row(max(rr+3,8),[f'ЛВК {current}: сохранённые сведения текущего игрового сезона, независимо от выбранного периода доната. «Нет данных» — не нулевой результат.'],4)
@@ -117,12 +137,12 @@ def export(store,path,sid=None):
     grand_total=sum(player['current'] for player in summaries)
     summary.put(3,3,(f'SUM(C5:C{4+len(summaries)})',grand_total) if summaries else 0,DONATION)
     summary.row(4,['Место','Игрок','Донат за период','Аккаунты','Донат за всё время'],1)
-    account_counts=Counter(r['player'] for r in rows)
-    ranking=sorted(summaries,key=lambda p:(not account_counts[p['id']],-p['current'],p['name'].casefold(),p['id']))
+    ranking=sorted(summaries,key=lambda p:(p['id'] not in groups,-p['current'],p['name'].casefold(),p['id']))
     previous_donation=None
     place=0
     for i,player in enumerate(ranking,5):
-        count=account_counts[player['id']]
+        player_id=player['id']
+        count=len(groups.get(player_id,()))
         rank='—'
         if session and count:
             if player['current']!=previous_donation:
@@ -130,8 +150,12 @@ def export(store,path,sid=None):
                 previous_donation=player['current']
             rank=place
         striped=i%2==0
-        summary.row(i,[rank,player['name'],player['current'],count,player['total']],STRIPED if striped else 0)
-        summary.put(i,3,player['current'],STRIPED_DONATION if striped else DONATION)
+        current_value=player['current']
+        if count:
+            formula=f"SUMIF('Аккаунты'!I$5:I${last_account},{player_id},'Аккаунты'!D$5:D${last_account})"
+            current_value=(formula,player['current'])
+        summary.row(i,[rank,player['name'],current_value,count,player['total']],STRIPED if striped else 0)
+        summary.put(i,3,current_value,STRIPED_DONATION if striped else DONATION)
         summary.put(i,5,player['total'],STRIPED_NUMBER if striped else NUMBER)
         summary.heights[i]=40 if len(player['name'])>30 else 25
     if not ranking: summary.put(5,1,'Нет игроков для отображения',4); summary.merge(5,1,5,5)
@@ -162,13 +186,15 @@ def export(store,path,sid=None):
         total.put(i,2,total_value,NUMBER)
         total.put(i,4,player['best'],NUMBER)
     sheets=[summary,a,total,periods,journal]
+    filter_name=(f'<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="1" hidden="1">'
+                 f"'Аккаунты'!$A$4:$I${last_account}</definedName></definedNames>" if a.auto_filter_ref else '')
     destination=Path(path); destination.parent.mkdir(parents=True,exist_ok=True)
     handle,tmp=tempfile.mkstemp(suffix='.xlsx',dir=destination.parent); os.close(handle)
     try:
         with zipfile.ZipFile(tmp,'w',zipfile.ZIP_DEFLATED) as z:
             z.writestr('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+''.join(f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(1,len(sheets)+1))+'</Types>')
             z.writestr('_rels/.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-            z.writestr('xl/workbook.xml',f'<?xml version="1.0"?><workbook xmlns="{NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+''.join(f'<sheet name="{s.name}" sheetId="{i}" r:id="rId{i}"/>' for i,s in enumerate(sheets,1))+'</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>')
+            z.writestr('xl/workbook.xml',f'<?xml version="1.0"?><workbook xmlns="{NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+''.join(f'<sheet name="{s.name}" sheetId="{i}" r:id="rId{i}"/>' for i,s in enumerate(sheets,1))+f'</sheets>{filter_name}<calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>')
             z.writestr('xl/_rels/workbook.xml.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+''.join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>' for i in range(1,len(sheets)+1))+f'<Relationship Id="rId{len(sheets)+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
             z.writestr('xl/styles.xml',STYLES)
             for i,s in enumerate(sheets,1): z.writestr(f'xl/worksheets/sheet{i}.xml',s.xml())

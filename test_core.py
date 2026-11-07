@@ -84,18 +84,22 @@ class Accounting(unittest.TestCase):
             self.assertIsNone(z.testzip())
             for name in z.namelist(): ET.fromstring(z.read(name))
             xml=z.read('xl/worksheets/sheet2.xml').decode()
-            self.assertIn('<autoFilter ref="A4:H6"/>',xml)
-            self.assertNotIn('A5:A6',xml)
+            self.assertIn('<autoFilter ref="A4:I6">',xml)
+            self.assertIn('<mergeCell ref="A5:A6"/>',xml)
             self.assertIn('=SUM(1,2) &amp; &lt;Дима&gt;',xml)
         # Independently verify filters, formulas and cached values.
         try: import openpyxl
         except ImportError: return
         wb=openpyxl.load_workbook(path,data_only=False)
         self.assertEqual(wb.active['C3'].value,'=SUM(C5:C5)')
+        self.assertEqual(wb.active['C5'].value,"=SUMIF('Аккаунты'!I$5:I$6,1,'Аккаунты'!D$5:D$6)")
         self.assertEqual(wb['Периоды']['C5'].value,"=SUMIFS('Журнал'!E$5:E$7,'Журнал'!F$5:F$7,D5,'Журнал'!D$5:D$7,B5)")
         wb.close(); wb=openpyxl.load_workbook(path,data_only=True)
         accounts=wb['Аккаунты']
-        self.assertEqual([accounts[f'A{i}'].value for i in (5,6)],['=SUM(1,2) & <Дима>']*2)
+        self.assertEqual([accounts[f'A{i}'].value for i in (5,6)],['=SUM(1,2) & <Дима>',None])
+        self.assertEqual({f.colId for f in accounts.auto_filter.filterColumn if f.hiddenButton},
+                         {0,1,2,3,6,7,8})
+        self.assertTrue(accounts.column_dimensions['I'].hidden)
         self.assertEqual([accounts[f'C{i}'].value for i in (5,6)],['#P0Y8Q2L','#Q0Y8Q2L'])
         self.assertEqual([accounts[f'D{i}'].value for i in (5,6)],[80,300])
         self.assertEqual(wb['За всё время']['B5'].value,480)

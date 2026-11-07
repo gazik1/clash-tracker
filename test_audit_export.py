@@ -35,6 +35,7 @@ class ExportAudit(unittest.TestCase):
         export(self.s, target)
         wb = self.load(target)
         self.assertEqual(wb['Аккаунты']['A5'].value, 'Нет аккаунтов в выбранном периоде')
+        self.assertIsNone(wb['Аккаунты'].auto_filter.ref)
         wb.close()
         original = target.read_bytes()
         with self.assertRaisesRegex(ValueError, 'Период не найден'):
@@ -97,7 +98,7 @@ class ExportAudit(unittest.TestCase):
         self.assertEqual(wb.active['C5'].number_format,'#,##0')
         self.assertEqual(list(wb.active.iter_rows(min_row=5,max_row=8,max_col=4,values_only=True)),
                          [(1,'Борис',1500,1),(1,'Юрий',1500,1),(3,'Александр',0,1),('—','Игрок без аккаунта',0,0)])
-        self.assertEqual(wb['Аккаунты'].auto_filter.ref,'A4:H7')
+        self.assertEqual(wb['Аккаунты'].auto_filter.ref,'A4:I7')
         wb.close()
 
     def test_write_failure_leaves_existing_report_and_removes_temp(self):
