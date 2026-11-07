@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+personal_key.py
+settings.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite*
+*.xlsx
