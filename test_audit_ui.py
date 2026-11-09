@@ -187,6 +187,19 @@ class DesktopReliability(unittest.TestCase):
         self.assertEqual(self.ui.store.summary()[0]['total'], 120)
 
 
+    def test_late_account_shows_cwl_after_period_ends(self):
+        from test_core import t
+        late = '#Q0Y8Q2L'
+        self.ui.store.finish({self.key: self.profile(value=180)}, t(3))
+        self.ui.store.add_account(self.pid, self.profile(late, 500), t(4))
+        self.ui.store.save_war('#TEST','2026-11',{'state':'warEnded','clan':{
+            'tag':'#QYPG','name':'Аркадия','members':[{'tag':late,'attacks':[{'stars':3}]}]}})
+        with patch('core.now',return_value=t(5,11)):
+            self.ui.refresh()
+        self.assertEqual(self.ui.accounts_tree.set(late,'period'),'Не начат')
+        self.assertEqual(self.ui.accounts_tree.set(late,'clan'),'Аркадия')
+        self.assertEqual(self.ui.accounts_tree.set(late,'stars'),'3')
+
     @staticmethod
     def descendants(widget):
         for child in widget.winfo_children():

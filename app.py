@@ -181,13 +181,13 @@ class App(tk.Tk):
         for a in self.store.accounts():
             if a['player']!=player: continue
             if self.search_account_tags is not None and a['tag'] not in self.search_account_tags: continue
-            r=stats.get(a['tag'],{})
+            r=stats.get(a['tag']) or self.store.cwl_stats(a['tag'])
             baseline=r.get('baseline')
             start=baseline if baseline is not None else 'Не начат'
             end=r['last_value'] if baseline is not None else a['friend']
             total=r['total'] if baseline is not None else 'Не начат'
             self.accounts_tree.insert('','end',iid=a['tag'],values=(a['nick'],a['tag'],start,end,total,
-                r.get('cwl_clan','Нет данных'),r['stars'] if r.get('stars') is not None else 'Нет данных'))
+                r['cwl_clan'],r['stars'] if r['stars'] is not None else 'Нет данных'))
         if previous and self.accounts_tree.exists(previous[0]):
             self.accounts_tree.selection_set(previous[0])
     def attempt(self,fn):

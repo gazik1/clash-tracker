@@ -129,7 +129,10 @@ class Store:
             self.db.execute('UPDATE accounts SET nick=?,friend=?,last_time=?,clan_tag=?,clan_name=? WHERE tag=?',
                 (p['name'],value,t.isoformat(),clan.get('tag'),clan.get('name'),key))
     def recalculate(self,profiles,time=None):
-        with self.db: self._apply(profiles,time or now())
+        t=time or now()
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self._apply(profiles,t)
     def set_baseline(self,session,key,value):
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -146,10 +149,11 @@ class Store:
                 self.db.execute('INSERT INTO baseline_edits(event,old_value,new_value) VALUES(?,?,?)',
                     (event,entry['baseline'],value))
     def start(self,profiles,time=None):
-        if self.running(): raise ValueError('Подсчёт уже идёт.')
-        if not self.accounts(): raise ValueError('Сначала добавьте аккаунты.')
         t=time or now()
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if self.running(): raise ValueError('Подсчёт уже идёт.')
+            if not self.accounts(): raise ValueError('Сначала добавьте аккаунты.')
             self._apply(profiles,t)
             sid=self.db.execute('INSERT INTO sessions(started) VALUES(?)',(t.isoformat(),)).lastrowid
             for a in self.accounts():
@@ -170,6 +174,7 @@ class Store:
     def archive(self,profiles,keys,player=None,time=None):
         t=time or now()
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
             if keys and self.running(): self._apply(profiles,t,keys)
             for key in keys:
                 self.db.execute('UPDATE accounts SET active=0 WHERE tag=?',(key,))
@@ -207,6 +212,11 @@ class Store:
                     self.db.execute('INSERT OR REPLACE INTO rosters VALUES(?,?,?,?)',(s,m['tag'],c['tag'],c['name']))
                     self.db.execute('INSERT OR REPLACE INTO wars VALUES(?,?,?,?)',
                         (key,m['tag'],s,sum(int(a['stars']) for a in m.get('attacks',[]))))
+    def cwl_stats(self,key,month=None):
+        month=month or now().astimezone(MSK).strftime('%Y-%m')
+        clans=self.db.execute('SELECT clan_name FROM rosters WHERE substr(season,1,7)=? AND tag=?',(month,key))
+        stars=self.db.execute('SELECT SUM(stars) FROM wars WHERE substr(season,1,7)=? AND tag=?',(month,key)).fetchone()[0]
+        return {'cwl_clan':', '.join(dict.fromkeys(row[0] for row in clans)) or 'Нет данных','stars':stars}
     def rows(self,sid=None):
         s=self.latest() if sid is None else self.db.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
         month=now().astimezone(MSK).strftime('%Y-%m')
@@ -216,10 +226,8 @@ class Store:
             data=self.db.execute('SELECT a.*,p.name,NULL baseline,NULL last_value,NULL entry_started,NULL entry_ended FROM accounts a JOIN players p ON p.id=a.player WHERE a.active=1 ORDER BY p.name,a.tag')
         result=[]
         for a in data:
-            c=list(self.db.execute('SELECT clan_name FROM rosters WHERE substr(season,1,7)=? AND tag=?',(month,a['tag'])))
-            stars=self.db.execute('SELECT SUM(stars) FROM wars WHERE substr(season,1,7)=? AND tag=?',(month,a['tag'])).fetchone()[0]
-            result.append(dict(a)|dict(total=(a['last_value']-a['baseline']) if a['baseline'] is not None else 0,
-                cwl_clan=', '.join(dict.fromkeys(r[0] for r in c)) or 'Нет данных',stars=stars))
+            total=(a['last_value']-a['baseline']) if a['baseline'] is not None else 0
+            result.append(dict(a)|self.cwl_stats(a['tag'],month)|{'total':total})
         return result
     def summary(self, sid=None):
         if sid is None:

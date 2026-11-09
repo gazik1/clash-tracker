@@ -42,6 +42,35 @@ class AuditAccounting(unittest.TestCase):
         self.s.add_player('Глава')
         with self.assertRaises(ValueError): self.s.restore_player(self.pid)
         self.assertEqual(len(self.s.archived_players()), 1)
+    def test_parallel_refresh_serializes_snapshot_checks_and_events(self):
+        sid = self.s.start({A: profile(value=100)}, time(2))
+        second = Store(self.s.path)
+        second.db.execute('PRAGMA busy_timeout=0')
+        blocked = []
+
+        def interleave(sql):
+            if sql.startswith('SELECT * FROM entries WHERE'):
+                try:
+                    second.recalculate({A: profile(value=180)}, time(4))
+                except sqlite3.OperationalError as exc:
+                    blocked.append(str(exc))
+
+        try:
+            self.s.db.set_trace_callback(interleave)
+            try:
+                self.s.recalculate({A: profile(value=150)}, time(3))
+            finally:
+                self.s.db.set_trace_callback(None)
+            self.assertEqual(len(blocked), 1)
+            self.assertIn('locked', blocked[0])
+            second.recalculate({A: profile(value=180)}, time(4))
+            with self.assertRaisesRegex(ValueError, 'устаревший'):
+                self.s.recalculate({A: profile(value=150)}, time(3))
+            self.assertEqual(self.s.accounts()[0]['friend'], 180)
+            self.assertEqual(self.s.summary(sid)[0]['current'], 80)
+            self.assertEqual(self.s.db.execute('SELECT SUM(amount) FROM events').fetchone()[0], 80)
+        finally:
+            second.db.close()
     def test_readd_stale_or_decreasing_snapshot_keeps_archive(self):
         self.s.archive({}, [A], time=time(2))
         for p, stamp in ((profile(value=101), time(1)), (profile(value=99), time(3))):
