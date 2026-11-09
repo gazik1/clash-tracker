@@ -32,6 +32,8 @@ class App(tk.Tk):
         except (OSError,ValueError): pass
         self.config_data.pop('auto', None)
         self.store=Store(DB); self.jobs=queue.Queue(); self.busy=False; self.buttons=[]
+        self.panel=None
+        self.bind('<Map>',self._restore_panel,add='+')
         style=ttk.Style(self); style.theme_use('clam')
         style.configure('TFrame',background='#edf2f6'); style.configure('TLabel',background='#edf2f6',font=('Segoe UI',10))
         style.configure('TButton',font=('Segoe UI',10),padding=(12,9))
@@ -170,8 +172,15 @@ class App(tk.Tk):
             state+=f' · с {started} МСК'
         self.state_text.set(state+f' · игроков {player_count}, аккаунтов {len(self.store.accounts())}')
         self.start_btn.configure(text='▶ Начать следующий период' if latest else '▶ Начать подсчёт для всех')
-        if not self.busy:
-            self.start_btn.configure(state='disabled' if active else 'normal'); self.end_btn.configure(state='normal' if active else 'disabled')
+        self.refresh_buttons()
+    def refresh_buttons(self):
+        blocked=self.busy or self.panel is not None
+        for button in self.buttons:
+            button.configure(state='disabled' if blocked else 'normal')
+        if not blocked:
+            active=self.active_period_id is not None
+            self.start_btn.configure(state='disabled' if active else 'normal')
+            self.end_btn.configure(state='normal' if active else 'disabled')
     def show_accounts(self):
         previous=self.accounts_tree.selection()
         self.accounts_tree.delete(*self.accounts_tree.get_children())
@@ -194,9 +203,9 @@ class App(tk.Tk):
         try: fn()
         except Exception as exc: messagebox.showerror('Clash Tracker',str(exc),parent=self)
     def run(self,work,message,done=None):
-        if self.busy: return
+        if self.busy or self.panel is not None: return
         self.busy=True; self.status.set(message); self.progress.start(12)
-        for b in self.buttons: b.configure(state='disabled')
+        self.refresh_buttons()
         def worker():
             store=None
             try:
@@ -209,7 +218,6 @@ class App(tk.Tk):
     def poll(self):
         try:
             ok,result,done=self.jobs.get_nowait(); self.busy=False; self.progress.stop()
-            for b in self.buttons: b.configure(state='normal')
             self.refresh()
             if ok:
                 self.status.set(str(result).split('\n')[0]); self.log(str(result))
@@ -365,11 +373,37 @@ class App(tk.Tk):
             if os.name=='nt': os.startfile(str(folder))
             else: messagebox.showinfo('Папка отчётов',str(folder),parent=self)
         self.attempt(work)
+    def _open_panel(self,title):
+        if self.busy: return None
+        if self.panel is not None:
+            self._raise_panel()
+            return None
+        win=tk.Toplevel(self)
+        win.title(title)
+        win.transient(self)
+        # Keep the owner window enabled so the Windows taskbar can restore it.
+        self.panel=win
+        win.bind('<Destroy>',self._panel_closed,add='+')
+        self.refresh_buttons()
+        return win
+    def _panel_closed(self,event):
+        if event.widget is self.panel:
+            self.panel=None
+            self.refresh_buttons()
+    def _restore_panel(self,event):
+        if event.widget is self and self.panel is not None:
+            self.after_idle(self._raise_panel)
+    def _raise_panel(self):
+        if self.panel is not None and self.state() in ('normal','zoomed'):
+            self.panel.deiconify()
+            self.panel.lift()
     def restore_player(self):
         players=self.store.archived_players()
         if not players:
             messagebox.showinfo('Архив','Нет удалённых игроков.',parent=self); return
-        win=tk.Toplevel(self); win.title('Восстановить игрока'); win.geometry('560x350'); win.transient(self); win.grab_set()
+        win=self._open_panel('Восстановить игрока')
+        if win is None: return
+        win.geometry('560x350')
         frame=ttk.Frame(win,padding=16); frame.pack(fill='both',expand=True)
         ttk.Label(frame,text='Вернётся прежний игрок с его историей. Аккаунты добавьте заново по тегам — их учёт продолжится с нового запроса.',wraplength=510).pack(fill='x')
         choices=tk.Listbox(frame,exportselection=False,font=('Segoe UI',11)); choices.pack(fill='both',expand=True,pady=10)
@@ -394,7 +428,10 @@ class App(tk.Tk):
             self.status.set('Клан ЛВК сохранён. Нажмите «Пересчитать всё», чтобы получить данные.')
         self.attempt(work)
     def settings(self):
-        win=tk.Toplevel(self); win.title('Настройки'); win.geometry(f'760x{min(650,max(420,self.winfo_screenheight()-100))}'); win.minsize(640,420); win.transient(self); win.grab_set()
+        win=self._open_panel('Настройки')
+        if win is None: return
+        win.geometry(f'760x{min(650,max(420,self.winfo_screenheight()-100))}')
+        win.minsize(640,420)
         shell=ttk.Frame(win,padding=12); shell.pack(fill='both',expand=True)
         buttons=ttk.Frame(shell); buttons.pack(side='bottom',fill='x',pady=(10,0))
         canvas=tk.Canvas(shell,highlightthickness=0,background='#edf2f6')
@@ -461,6 +498,7 @@ class App(tk.Tk):
         if self.busy:
             messagebox.showinfo('Обновление','Дождитесь окончания запроса перед закрытием.',parent=self); return
         self.after_cancel(self.poll_job)
+        self.panel=None
         self.store.db.close(); self.destroy()
 
 if __name__=='__main__':

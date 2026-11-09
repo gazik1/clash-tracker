@@ -10,7 +10,7 @@ import urllib.request
 import urllib.error
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
-VERSION = '0.10'
+VERSION = '0.10.1'
 UTC=dt.timezone.utc
 MSK=dt.timezone(dt.timedelta(hours=3))
 def now(): return dt.datetime.now(UTC)

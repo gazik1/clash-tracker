@@ -7,7 +7,47 @@ import threading
 import time
 import unittest
 from contextlib import ExitStack
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+
+class WindowRestoreLogic(unittest.TestCase):
+    def test_tool_window_preserves_owner_restore_and_period_controls(self):
+        from app import App
+        panel=Mock()
+        start,end,other=Mock(),Mock(),Mock()
+        owner=SimpleNamespace(busy=False,panel=None,active_period_id=1,
+            buttons=[start,end,other],start_btn=start,end_btn=end,
+            state=Mock(return_value='iconic'),after_idle=Mock())
+        for name in ('_open_panel','_panel_closed','_restore_panel','_raise_panel','refresh_buttons'):
+            setattr(owner,name,getattr(App,name).__get__(owner))
+
+        with patch('app.tk.Toplevel',return_value=panel) as new_window:
+            self.assertIs(owner._open_panel('Настройки'),panel)
+            self.assertIsNone(owner._open_panel('Настройки'))
+            new_window.assert_called_once_with(owner)
+        panel.transient.assert_called_once_with(owner)
+        panel.grab_set.assert_not_called()
+        for button in owner.buttons:
+            button.configure.assert_called_with(state='disabled')
+        panel.deiconify.assert_not_called()
+
+        owner._restore_panel(SimpleNamespace(widget=panel))
+        owner.after_idle.assert_not_called()
+        owner.state.return_value='normal'
+        owner._restore_panel(SimpleNamespace(widget=owner))
+        owner.after_idle.assert_called_once_with(owner._raise_panel)
+        owner.after_idle.call_args.args[0]()
+        panel.deiconify.assert_called_once()
+        panel.lift.assert_called_once()
+
+        owner._panel_closed(SimpleNamespace(widget=object()))
+        self.assertIs(owner.panel,panel)
+        owner._panel_closed(SimpleNamespace(widget=panel))
+        self.assertIsNone(owner.panel)
+        start.configure.assert_called_with(state='disabled')
+        end.configure.assert_called_with(state='normal')
+        other.configure.assert_called_with(state='normal')
 
 
 @unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt', 'A graphical display is needed')
