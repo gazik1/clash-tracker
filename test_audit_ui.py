@@ -201,7 +201,7 @@ class DesktopReliability(unittest.TestCase):
             win.geometry('760x420+0+0')
             self.ui.update()
             controls = {w.cget('text'): w for w in self.descendants(win) if w.winfo_class() == 'TButton'}
-            for label in ('Сохранить', 'Резервная копия базы'):
+            for label in ('Сохранить', 'Выгрузить базу', 'Загрузить базу'):
                 button = controls[label]
                 self.assertTrue(button.winfo_ismapped(), label)
                 self.assertGreaterEqual(button.winfo_height(), button.winfo_reqheight(), label)

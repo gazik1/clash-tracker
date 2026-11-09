@@ -1,6 +1,7 @@
 """Regression scenarios from the clan-leader reliability audit. Offline fixtures only."""
 import datetime as dt
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -123,6 +124,44 @@ class AuditAccounting(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'рабочей базы'):
             self.s.backup(alias)
         self.assertEqual(self.s.accounts()[0]['friend'], 100)
+    def test_import_restores_previous_version_and_keeps_local_backup(self):
+        original = self.s
+        original.start({A: profile()}, time(2))
+        original.recalculate({A: profile(value=180)}, time(3))
+        with original.db:
+            original.db.execute('DROP TABLE cwl_hints')
+            original.db.execute('INSERT INTO clans VALUES(?)', (CLAN,))
+        snapshot = Path(self.temp.name) / 'копия #1.sqlite3'
+        original.backup(snapshot)
+        destination_path = Path(self.temp.name) / 'destination.sqlite3'
+        destination = Store(destination_path)
+        self.addCleanup(destination.db.close)
+        destination.add_player('Местный игрок')
+        previous = destination.import_backup(snapshot)
+        self.assertEqual(destination.running()['id'], 1)
+        self.assertEqual(destination.summary()[0]['total'], 80)
+        self.assertEqual(destination.db.execute('SELECT tag FROM clans').fetchone()[0], CLAN)
+        self.assertEqual(destination.db.execute('SELECT COUNT(*) FROM cwl_hints').fetchone()[0], 0)
+        with sqlite3.connect(previous) as db:
+            self.assertEqual(db.execute('SELECT name FROM players').fetchone()[0], 'Местный игрок')
+        with sqlite3.connect(destination_path) as db:
+            self.assertEqual(db.execute('SELECT last_value FROM entries').fetchone()[0], 180)
+        with sqlite3.connect(snapshot) as db:
+            self.assertIsNone(db.execute("SELECT name FROM sqlite_schema WHERE name='cwl_hints'").fetchone())
+
+    def test_import_rejects_other_files_without_changing_working_database(self):
+        root = Path(self.temp.name)
+        unrelated = root / 'unrelated.db'
+        with sqlite3.connect(unrelated) as db:
+            db.execute('CREATE TABLE unrelated(data TEXT)')
+        invalid = root / 'invalid.sqlite3'
+        invalid.write_bytes(b'not a SQLite database')
+        for path in (unrelated, invalid, self.s.path):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.s.import_backup(path)
+        self.assertEqual(self.s.accounts()[0]['friend'], 100)
+        self.assertEqual(list(root.glob('Clash_before_import_*')), [])
+
     def test_opening_previous_database_only_adds_hint_table(self):
         self.s.start({A: profile()}, time(2))
         self.s.finish({A: profile(value=400)}, time(3))

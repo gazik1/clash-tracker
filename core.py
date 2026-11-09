@@ -1,9 +1,11 @@
 """Local accounting. Standard-library-only, read-only API client."""
+from contextlib import closing
 import datetime as dt
 import json
 from pathlib import Path
 import re
 import sqlite3
+import tempfile
 import urllib.request
 import urllib.error
 from urllib.parse import quote
@@ -25,10 +27,7 @@ def friend(profile):
     raise ValueError('API не вернул достижение «Настоящий друг» (Friend in Need). Подсчёт не изменён.')
 
 class Store:
-    def __init__(self,path):
-        self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True)
-        self.db=sqlite3.connect(self.path); self.db.row_factory=sqlite3.Row
-        self.db.executescript('''
+    SCHEMA = '''
         PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS accounts(tag TEXT PRIMARY KEY,player INTEGER NOT NULL REFERENCES players(id),
@@ -48,7 +47,12 @@ class Store:
         CREATE TABLE IF NOT EXISTS rosters(season TEXT,tag TEXT,clan_tag TEXT,clan_name TEXT,
           PRIMARY KEY(season,tag,clan_tag));
         CREATE TABLE IF NOT EXISTS wars(war TEXT,tag TEXT,season TEXT,stars INTEGER,PRIMARY KEY(war,tag));
-        '''); self.db.commit()
+        '''
+
+    def __init__(self,path):
+        self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True)
+        self.db=sqlite3.connect(self.path); self.db.row_factory=sqlite3.Row
+        self.db.executescript(self.SCHEMA); self.db.commit()
     def running(self):
         return self.db.execute('SELECT * FROM sessions WHERE ended IS NULL').fetchone()
     def latest(self):
@@ -222,10 +226,53 @@ class Store:
         path=Path(path)
         if path.resolve()==self.path.resolve() or (path.exists() and path.samefile(self.path)):
             raise ValueError('Резервную копию нельзя записать поверх рабочей базы. Выберите другой файл.')
-        target=sqlite3.connect(path)
-        try:
-            with target: self.db.backup(target)
-        finally: target.close()
+        with closing(sqlite3.connect(path)) as target:
+            self._copy_database(self.db,target)
+
+    @staticmethod
+    def _copy_database(source,target):
+        def check_lock(status,remaining,total):
+            if status in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):
+                raise sqlite3.OperationalError('База занята. Закройте другое окно Clash Tracker и повторите.')
+        source.backup(target,pages=256,progress=check_lock)
+
+    def import_backup(self,path):
+        path=Path(path).resolve(strict=True)
+        if path.samefile(self.path):
+            raise ValueError('Выберите файл копии, отличный от рабочей базы.')
+        with closing(sqlite3.connect(':memory:')) as snapshot:
+            try:
+                with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as source:
+                    self._copy_database(source,snapshot)
+                self._validate_backup(snapshot)
+            except sqlite3.DatabaseError as exc:
+                raise ValueError(f'Не удалось прочитать копию базы Clash Tracker. {exc}') from None
+            with tempfile.NamedTemporaryFile(prefix='Clash_before_import_',suffix='.sqlite3',
+                                             dir=self.path.parent,delete=False) as file:
+                previous=Path(file.name)
+            try:
+                self.backup(previous)
+            except Exception:
+                previous.unlink(missing_ok=True)
+                raise
+            self._copy_database(snapshot,self.db)
+        return previous
+
+    def _validate_backup(self,snapshot):
+        snapshot.execute('PRAGMA trusted_schema=OFF')
+        schema_query='SELECT name, sql FROM sqlite_schema WHERE sql IS NOT NULL'
+        with closing(sqlite3.connect(':memory:')) as template:
+            template.executescript(self.SCHEMA)
+            expected=dict(template.execute(schema_query))
+        actual=dict(snapshot.execute(schema_query))
+        legacy=expected.copy()
+        hint_schema=legacy.pop('cwl_hints')
+        if actual == legacy:
+            snapshot.execute(hint_schema)
+        elif actual != expected:
+            raise ValueError('Выбранный файл не является совместимой базой Clash Tracker.')
+        if snapshot.execute('PRAGMA integrity_check').fetchall() != [('ok',)] or snapshot.execute('PRAGMA foreign_key_check').fetchone():
+            raise ValueError('В выбранной копии базы обнаружены повреждённые данные.')
 
 class APITimeout(RuntimeError):
     pass

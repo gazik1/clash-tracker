@@ -373,10 +373,34 @@ class App(tk.Tk):
                 win.destroy(); self.log('Настройки сохранены.')
             except Exception as exc: messagebox.showerror('Настройки',str(exc),parent=win)
         ttk.Button(buttons,text='Сохранить',command=save,style='Accent.TButton').pack(side='right')
+        db_filetypes=[('База SQLite','*.sqlite3 *.sqlite *.db'),('Все файлы','*')]
         def backup():
-            path=filedialog.asksaveasfilename(parent=win,initialfile='Clash_backup_'+now().strftime('%Y-%m-%d')+'.sqlite3',defaultextension='.sqlite3')
-            if path: self.attempt(lambda:(self.store.backup(path),messagebox.showinfo('Резервная копия','Сохранено: '+path,parent=win)))
-        ttk.Button(buttons,text='Резервная копия базы',command=backup).pack(side='left')
+            path=filedialog.asksaveasfilename(parent=win,title='Выгрузить базу',
+                initialfile='Clash_backup_'+now().astimezone(MSK).strftime('%Y-%m-%d_%H-%M-%S')+'.sqlite3',
+                defaultextension='.sqlite3',filetypes=db_filetypes)
+            if not path: return
+            try:
+                self.store.backup(path)
+                messagebox.showinfo('База выгружена','Файл для переноса:\n'+path,parent=win)
+            except (OSError,ValueError,sqlite3.Error) as exc:
+                messagebox.showerror('Выгрузка базы',str(exc),parent=win)
+        def load_backup():
+            path=filedialog.askopenfilename(parent=win,title='Загрузить базу',filetypes=db_filetypes)
+            if not path or not messagebox.askyesno('Загрузить базу',
+                'Данные в приложении будут заменены данными из файла. Текущая база будет сохранена отдельной копией. Продолжить?',
+                parent=win): return
+            try:
+                previous=self.store.import_backup(path)
+            except (OSError,ValueError,sqlite3.Error) as exc:
+                messagebox.showerror('Загрузка базы',str(exc),parent=win)
+                return
+            clans.set(' '.join(c[0] for c in self.store.db.execute('SELECT tag FROM clans')))
+            self.refresh()
+            self.status.set('База загружена.')
+            self.log(f'База загружена. Предыдущая база: {previous}')
+            messagebox.showinfo('База загружена',f'Предыдущая база сохранена:\n{previous}',parent=win)
+        ttk.Button(buttons,text='Выгрузить базу',command=backup).pack(side='left')
+        ttk.Button(buttons,text='Загрузить базу',command=load_backup).pack(side='left',padx=(8,0))
     def close(self):
         if self.busy:
             messagebox.showinfo('Обновление','Дождитесь окончания запроса перед закрытием.',parent=self); return
