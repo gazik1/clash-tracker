@@ -130,6 +130,7 @@ class AuditAccounting(unittest.TestCase):
         original.recalculate({A: profile(value=180)}, time(3))
         with original.db:
             original.db.execute('DROP TABLE cwl_hints')
+            original.db.execute('DROP TABLE baseline_edits')
             original.db.execute('INSERT INTO clans VALUES(?)', (CLAN,))
         snapshot = Path(self.temp.name) / 'копия #1.sqlite3'
         original.backup(snapshot)
@@ -142,12 +143,30 @@ class AuditAccounting(unittest.TestCase):
         self.assertEqual(destination.summary()[0]['total'], 80)
         self.assertEqual(destination.db.execute('SELECT tag FROM clans').fetchone()[0], CLAN)
         self.assertEqual(destination.db.execute('SELECT COUNT(*) FROM cwl_hints').fetchone()[0], 0)
+        self.assertEqual(destination.db.execute('SELECT COUNT(*) FROM baseline_edits').fetchone()[0], 0)
         with sqlite3.connect(previous) as db:
             self.assertEqual(db.execute('SELECT name FROM players').fetchone()[0], 'Местный игрок')
         with sqlite3.connect(destination_path) as db:
             self.assertEqual(db.execute('SELECT last_value FROM entries').fetchone()[0], 180)
         with sqlite3.connect(snapshot) as db:
             self.assertIsNone(db.execute("SELECT name FROM sqlite_schema WHERE name='cwl_hints'").fetchone())
+
+    def test_manual_baseline_keeps_period_and_event_totals_in_sync(self):
+        sid = self.s.start({A: profile(value=110)}, time(2))
+        self.s.recalculate({A: profile(value=180)}, time(3))
+        self.s.set_baseline(sid, A, 100)
+        self.s.finish({A: profile(value=200)}, time(4))
+        self.s.set_baseline(sid, A, 130)
+        with self.assertRaises(ValueError):
+            self.s.set_baseline(sid, A, 201)
+        self.s.set_baseline(sid, A, 130)
+        row = self.s.rows(sid)[0]
+        self.assertEqual((row['baseline'], row['last_value'], row['total']), (130, 200, 70))
+        self.assertEqual(self.s.summary(sid)[0]['best'], 70)
+        events = self.s.db.execute('SELECT amount FROM events WHERE session=? ORDER BY id', (sid,))
+        self.assertEqual([event[0] for event in events], [70, 10, 20, -30])
+        edits = self.s.db.execute('SELECT old_value,new_value FROM baseline_edits ORDER BY event')
+        self.assertEqual([tuple(edit) for edit in edits], [(110, 100), (100, 130)])
 
     def test_import_rejects_other_files_without_changing_working_database(self):
         root = Path(self.temp.name)

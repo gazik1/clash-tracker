@@ -52,14 +52,23 @@ class App(tk.Tk):
         self.button(head,'Сохранить Excel',self.save_as).pack(side='right')
         self.notebook=ttk.Notebook(frame)
         page=ttk.Frame(self.notebook,padding=12); self.notebook.add(page,text='  Игроки и аккаунты  ')
-        left=ttk.Frame(page); left.pack(side='left',fill='y',padx=(0,14))
+        search=ttk.Frame(page); search.pack(fill='x',pady=(0,10))
+        ttk.Label(search,text='Поиск:').pack(side='left',padx=(0,6))
+        self.search_mode=tk.StringVar(value='Игрок')
+        for mode in ('Игрок','Аккаунт'):
+            ttk.Radiobutton(search,text=mode,variable=self.search_mode,value=mode).pack(side='left',padx=(0,8))
+        self.search_query=tk.StringVar()
+        ttk.Entry(search,textvariable=self.search_query).pack(side='left',fill='x',expand=True)
+        ttk.Button(search,text='Сбросить',command=lambda:self.search_query.set('')).pack(side='left',padx=(8,0))
+        lists=ttk.Frame(page); lists.pack(fill='both',expand=True)
+        left=ttk.Frame(lists); left.pack(side='left',fill='y',padx=(0,14))
         ttk.Label(left,text='Игроки',font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,8))
         player_actions=ttk.Frame(left); player_actions.pack(side='bottom',fill='x')
         for title,fn in [('Добавить игрока',self.add_player),('Изменить имя',self.rename),('Удалить игрока',self.remove_player)]:
             self.button(player_actions,title,fn).pack(fill='x',pady=(6,0))
         self.player_list=tk.Listbox(left,width=24,font=('Segoe UI',12),height=12,exportselection=False,bd=0,highlightthickness=1,highlightbackground='#cbd7df',selectbackground='#176b78')
         self.player_list.pack(fill='both',expand=True); self.player_list.bind('<<ListboxSelect>>',lambda e:self.show_accounts())
-        right=ttk.Frame(page); right.pack(side='left',fill='both',expand=True)
+        right=ttk.Frame(lists); right.pack(side='left',fill='both',expand=True)
         ttk.Label(right,text='Аккаунты выбранного игрока',font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,8))
         # Reserve room for controls before the table takes the remaining height.
         account_footer=ttk.Frame(right); account_footer.pack(side='bottom',fill='x',pady=(8,0))
@@ -67,8 +76,13 @@ class App(tk.Tk):
         self.button(actions,'+ Добавить аккаунт по тегу',self.add_account).pack(side='left',padx=(0,8))
         self.button(actions,'Удалить аккаунт',self.remove_account).pack(side='left')
         self.button(actions,'Клан ЛВК',self.set_account_cwl).pack(side='left',padx=(8,0))
+        self.button(actions,'Изменить начало',self.edit_account_baseline).pack(side='left',padx=(8,0))
         ttk.Label(account_footer,text='ЛВК: текущий сезон, по полученным войнам. Удаление сохраняет вклад.',wraplength=560).pack(anchor='w',pady=(4,0))
-        self.accounts_tree=self.tree(right,[('nick','Ник',150),('tag','Тег',115),('friend','Настоящий друг',130),('period','Донат за период',130),('clan','Клан ЛВК',155),('stars','Звёзды',80)])
+        self.accounts_tree=self.tree(right,[('nick','Ник',122),('tag','Тег',106),
+            ('baseline','Настоящий друг начало',174),('friend','Настоящий друг конец',172),
+            ('period','Донат за период',126),('clan','Клан ЛВК',121),('stars','Звёзды',75)])
+        self.search_mode.trace_add('write',lambda *_:self.refresh_players())
+        self.search_query.trace_add('write',lambda *_:self.refresh_players())
         summary=ttk.Frame(self.notebook,padding=12); self.notebook.add(summary,text='  Итоги и рекорды  ')
         summary_footer=ttk.Frame(summary); summary_footer.pack(side='bottom',fill='x')
         self.button(summary_footer,'Восстановить игрока из архива',self.restore_player).pack(side='right')
@@ -109,16 +123,34 @@ class App(tk.Tk):
         selection=self.player_list.curselection()
         if not selection: raise ValueError('Выберите игрока слева.')
         return self.player_rows[selection[0]]
-    def refresh(self):
+    def selected_account(self):
+        selection=self.accounts_tree.selection()
+        if not selection: raise ValueError('Выберите аккаунт в таблице.')
+        return selection[0]
+    def refresh_players(self):
         selected=None
         try: selected=self.selected_player()['id']
         except ValueError: pass
-        self.player_rows=self.store.players(); self.player_list.delete(0,'end')
+        players=self.store.players()
+        self.player_rows=players
+        self.search_account_tags=None
+        query=self.search_query.get().strip().casefold()
+        if query and self.search_mode.get()=='Игрок':
+            self.player_rows=[p for p in players if query in p['name'].casefold()]
+        elif query:
+            matches=[a for a in self.store.accounts() if query in a['nick'].casefold() or query in a['tag'].casefold()]
+            owners={a['player'] for a in matches}
+            self.player_rows=[p for p in players if p['id'] in owners]
+            self.search_account_tags={a['tag'] for a in matches}
+        self.player_list.delete(0,'end')
         for i,p in enumerate(self.player_rows):
             self.player_list.insert('end',p['name'])
             if p['id']==selected: self.player_list.selection_set(i)
         if self.player_rows and not self.player_list.curselection(): self.player_list.selection_set(0)
         self.show_accounts()
+        return len(players)
+    def refresh(self):
+        player_count=self.refresh_players()
         active=self.store.running(); latest=self.store.latest()
         self.active_period_id=active['id'] if active else None
         self.summary_tree.heading('current',text=f'Донат за период #{latest["id"]}' if latest else 'Донат за период')
@@ -136,19 +168,28 @@ class App(tk.Tk):
         if latest:
             started=dt.datetime.fromisoformat(latest['started']).astimezone(MSK).strftime('%d.%m.%Y %H:%M')
             state+=f' · с {started} МСК'
-        self.state_text.set(state+f' · игроков {len(self.player_rows)}, аккаунтов {len(self.store.accounts())}')
+        self.state_text.set(state+f' · игроков {player_count}, аккаунтов {len(self.store.accounts())}')
         self.start_btn.configure(text='▶ Начать следующий период' if latest else '▶ Начать подсчёт для всех')
         if not self.busy:
             self.start_btn.configure(state='disabled' if active else 'normal'); self.end_btn.configure(state='normal' if active else 'disabled')
     def show_accounts(self):
+        previous=self.accounts_tree.selection()
         self.accounts_tree.delete(*self.accounts_tree.get_children())
         try: player=self.selected_player()['id']
         except ValueError: return
         stats={r['tag']:r for r in self.store.rows()}
         for a in self.store.accounts():
             if a['player']!=player: continue
+            if self.search_account_tags is not None and a['tag'] not in self.search_account_tags: continue
             r=stats.get(a['tag'],{})
-            self.accounts_tree.insert('','end',iid=a['tag'],values=(a['nick'],a['tag'],a['friend'],r.get('total',0),r.get('cwl_clan','Нет данных'),r.get('stars') if r.get('stars') is not None else 'Нет данных'))
+            baseline=r.get('baseline')
+            start=baseline if baseline is not None else 'Не начат'
+            end=r['last_value'] if baseline is not None else a['friend']
+            total=r['total'] if baseline is not None else 'Не начат'
+            self.accounts_tree.insert('','end',iid=a['tag'],values=(a['nick'],a['tag'],start,end,total,
+                r.get('cwl_clan','Нет данных'),r['stars'] if r.get('stars') is not None else 'Нет данных'))
+        if previous and self.accounts_tree.exists(previous[0]):
+            self.accounts_tree.selection_set(previous[0])
     def attempt(self,fn):
         try: fn()
         except Exception as exc: messagebox.showerror('Clash Tracker',str(exc),parent=self)
@@ -260,10 +301,27 @@ class App(tk.Tk):
         self.attempt(begin)
     def remove_account(self):
         def begin():
-            selected=self.accounts_tree.selection()
-            if not selected: raise ValueError('Выберите аккаунт в таблице.')
-            self.archive([selected[0]],None,selected[0])
+            key=self.selected_account()
+            self.archive([key],None,key)
         self.attempt(begin)
+    def edit_account_baseline(self):
+        def work():
+            key=self.selected_account()
+            period=self.store.latest()
+            entry=next((r for r in self.store.rows() if r['tag']==key),None)
+            if not period or entry is None:
+                raise ValueError('Для этого аккаунта ещё нет начального значения в показанном периоде.')
+            number=period['id']
+            value=simpledialog.askinteger('Изменить начало',
+                f'{entry["nick"]} ({key}), период №{number}\n'
+                f'Конечное значение: {entry["last_value"]}. Правка изменит донат за этот период.',
+                initialvalue=entry['baseline'],minvalue=0,maxvalue=entry['last_value'],parent=self)
+            if value is None or value==entry['baseline']: return
+            self.store.set_baseline(number,key,value)
+            self.refresh()
+            self.status.set(f'Начало периода №{number} исправлено.')
+            self.log(f'{key}, период №{number}: начало {entry["baseline"]} → {value}.')
+        self.attempt(work)
     def archive(self,keys,player,name):
         if not messagebox.askyesno('Удалить из списка?',name+' будет скрыт из списка. Накопленная статистика останется в истории. Продолжить?',parent=self): return
         api=API(self.config_data['token'],self.config_data['route']) if keys and self.store.running() else None
@@ -329,9 +387,7 @@ class App(tk.Tk):
         ttk.Button(frame,text='Восстановить выбранного',command=restore).pack(fill='x')
     def set_account_cwl(self):
         def work():
-            selected=self.accounts_tree.selection()
-            if not selected: raise ValueError('Выберите аккаунт в таблице.')
-            key=selected[0]
+            key=self.selected_account()
             value=simpledialog.askstring('Клан ЛВК выбранного аккаунта','Тег клана ЛВК в текущем сезоне. Пустое поле убирает привязку.\nЭто подсказка для поиска: участие и звёзды подтверждаются API.',initialvalue=self.store.get_cwl_clan(key) or '',parent=self)
             if value is None: return
             self.store.set_cwl_clan(key,tag(value) if value.strip() else None)

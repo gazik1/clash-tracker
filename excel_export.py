@@ -99,8 +99,16 @@ def export(store,path,sid=None):
     a.row(4,['Игрок','Ник','Тег','Донат за период','Клан ЛВК ('+current+')','Звёзды ЛВК',
              'Последний запрос, МСК','Учёт в периоде','ID игрока'],1)
     friend_note=period if session else 'Подсчёт ещё не начат. Показаны последние сохранённые значения.'
-    friend_sheet=base('Настоящий друг',[28,29,17,23,27,17], 'Пожертвования · Настоящий друг',friend_note)
-    friend_sheet.row(4,['Игрок','Ник','Тег','База на старте','Последнее показание','Разница'],1)
+    friend_sheet=base('Настоящий друг',[28,29,17,23,27,17,42], 'Пожертвования · Настоящий друг',friend_note)
+    friend_sheet.row(4,['Игрок','Ник','Тег','База на старте','Последнее показание','Разница','Правки начала'],1)
+    edits=defaultdict(list)
+    if session:
+        for edit in store.db.execute('''
+            SELECT e.tag,b.old_value,b.new_value
+            FROM baseline_edits b JOIN events e ON e.id=b.event
+            WHERE e.session=? ORDER BY b.event
+        ''',(session['id'],)):
+            edits[edit['tag']].append(f"{edit['old_value']:,} → {edit['new_value']:,}".replace(',',' '))
     groups=defaultdict(list)
     for row in rows:
         groups[row['player']].append(row)
@@ -126,18 +134,22 @@ def export(store,path,sid=None):
             else:
                 friend_sheet.put(rr,4,'Не начат',STRIPED if striped else 0)
                 friend_sheet.put(rr,6,'Не начат',STRIPED if striped else 0)
+            changes=edits.get(r['tag'],[])
+            friend_sheet.put(rr,7,'\n'.join(changes),STRIPED if striped else 0)
+            if len(changes)>1:
+                friend_sheet.heights[rr]=min(409,max(32,15*len(changes)+8))
             rr+=1
         a.merge(first,1,rr-1,1)
         friend_sheet.merge(first,1,rr-1,1)
     last_account=rr-1
     if session and rows:
         friend_sheet.row(rr+1,['База берётся на старте периода или при добавлении аккаунта. После возврата база корректируется, чтобы исключить донат за время отсутствия.'],4)
-        friend_sheet.merge(rr+1,1,rr+1,6)
+        friend_sheet.merge(rr+1,1,rr+1,7)
         friend_sheet.row(rr+2,['Последнее показание берётся из последнего сохранённого замера аккаунта в выбранном периоде.'],4)
-        friend_sheet.merge(rr+2,1,rr+2,6)
+        friend_sheet.merge(rr+2,1,rr+2,7)
     elif not rows:
         friend_sheet.row(5,['Нет показаний за выбранный период' if session else 'Нет добавленных аккаунтов'],4)
-        friend_sheet.merge(5,1,5,6)
+        friend_sheet.merge(5,1,5,7)
     if rows:
         a.auto_filter_ref=f'A4:I{last_account}'
         a.filter_buttons={5,6}
@@ -182,7 +194,7 @@ def export(store,path,sid=None):
     if not ranking: summary.put(5,1,'Нет игроков для отображения',4); summary.merge(5,1,5,5)
     periods=base('Периоды',[26,18,22,16,20,24,24], 'CLASH · История подсчётов','Границы периода задаются кнопками «Начать» и «Завершить и сохранить Excel».')
     periods.row(4,['Игрок','Период','Донат','ID игрока','Статус периода','Начало, МСК','Конец, МСК'],1)
-    journal=base('Журнал',[26,26,20,18,19,15], 'CLASH · Журнал приростов','Каждая запись показывает прирост достижения в открытом на тот момент периоде.')
+    journal=base('Журнал',[26,26,20,18,19,15], 'CLASH · Журнал приростов','Журнал содержит приросты достижения и поправки после ручного изменения стартовых значений.')
     journal.row(4,['Игрок','Тег','Время МСК','Период','Донат','ID игрока'],1)
     names={p['id']:p['name'] for p in summaries}
     events=list(store.db.execute('SELECT * FROM events ORDER BY time,id'))

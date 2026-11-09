@@ -41,6 +41,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,session INTEGER REFERENCES sessions(id),
           tag TEXT REFERENCES accounts(tag),player INTEGER REFERENCES players(id),time TEXT NOT NULL,
           amount INTEGER NOT NULL,month_uncertain INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS baseline_edits(event INTEGER PRIMARY KEY REFERENCES events(id),
+          old_value INTEGER NOT NULL,new_value INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS clans(tag TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS cwl_hints(season TEXT,tag TEXT REFERENCES accounts(tag),clan_tag TEXT NOT NULL,
           PRIMARY KEY(season,tag));
@@ -128,6 +130,21 @@ class Store:
                 (p['name'],value,t.isoformat(),clan.get('tag'),clan.get('name'),key))
     def recalculate(self,profiles,time=None):
         with self.db: self._apply(profiles,time or now())
+    def set_baseline(self,session,key,value):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            entry=self.db.execute('SELECT * FROM entries WHERE session=? AND tag=?',(session,key)).fetchone()
+            if entry is None:
+                raise ValueError('Для этого аккаунта нет начального значения в выбранном периоде.')
+            if type(value) is not int or not 0 <= value <= entry['last_value']:
+                raise ValueError('Начальное значение должно быть целым числом от 0 до конечного значения.')
+            adjustment=entry['baseline']-value
+            if adjustment:
+                self.db.execute('UPDATE entries SET baseline=? WHERE session=? AND tag=?',(value,session,key))
+                event=self.db.execute('INSERT INTO events(session,tag,player,time,amount) VALUES(?,?,?,?,?)',
+                    (session,key,entry['player'],now().isoformat(),adjustment)).lastrowid
+                self.db.execute('INSERT INTO baseline_edits(event,old_value,new_value) VALUES(?,?,?)',
+                    (event,entry['baseline'],value))
     def start(self,profiles,time=None):
         if self.running(): raise ValueError('Подсчёт уже идёт.')
         if not self.accounts(): raise ValueError('Сначала добавьте аккаунты.')
@@ -265,12 +282,11 @@ class Store:
             template.executescript(self.SCHEMA)
             expected=dict(template.execute(schema_query))
         actual=dict(snapshot.execute(schema_query))
-        legacy=expected.copy()
-        hint_schema=legacy.pop('cwl_hints')
-        if actual == legacy:
-            snapshot.execute(hint_schema)
-        elif actual != expected:
+        missing=[expected.pop(name) for name in ('cwl_hints','baseline_edits') if name not in actual]
+        if actual != expected:
             raise ValueError('Выбранный файл не является совместимой базой Clash Tracker.')
+        for sql in missing:
+            snapshot.execute(sql)
         if snapshot.execute('PRAGMA integrity_check').fetchall() != [('ok',)] or snapshot.execute('PRAGMA foreign_key_check').fetchone():
             raise ValueError('В выбранной копии базы обнаружены повреждённые данные.')
 
