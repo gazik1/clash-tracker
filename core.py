@@ -10,6 +10,7 @@ import urllib.request
 import urllib.error
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
+VERSION = '0.10'
 UTC=dt.timezone.utc
 MSK=dt.timezone(dt.timedelta(hours=3))
 def now(): return dt.datetime.now(UTC)
@@ -313,7 +314,7 @@ class API:
         if not path.startswith('/') or path.startswith('//'):
             raise ValueError('Неверный путь API.')
         request=urllib.request.Request(self.base_url+path,
-            headers={'Authorization':'Bearer '+self.token,'Accept':'application/json','User-Agent':'LocalClashTracker/0.2'})
+            headers={'Authorization':'Bearer '+self.token,'Accept':'application/json','User-Agent':f'LocalClashTracker/{VERSION}'})
         try:
             with urllib.request.urlopen(request,timeout=20) as response: return json.load(response)
         except urllib.error.HTTPError as exc:

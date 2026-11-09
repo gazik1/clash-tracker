@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-from core import Store, API, tag, sync_cwl, now, MSK
+from core import Store, API, tag, sync_cwl, now, MSK, VERSION
 from excel_export import export
 
 DATA=Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'.local/share')))/'ClashTracker'
@@ -23,7 +23,7 @@ class FinalReportError(RuntimeError):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('Clash Tracker 0.9 · Донат и ЛВК')
+        self.title(f'Clash Tracker {VERSION} · Донат и ЛВК')
         self.minsize(980, 480)
         height = min(780, max(480, self.winfo_screenheight() - 100))
         self.geometry(f'1200x{height}')
